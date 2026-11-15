@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 import 'package:egrado/data/database/app_database.dart';
 import 'package:egrado/data/repositories/id_generator.dart';
 import 'package:egrado/domain/overviews.dart';
 import 'package:egrado/domain/school_class.dart';
+import 'package:egrado/grading/grading_scheme.dart';
 
 /// Classes and their student lists.
 abstract interface class ClassRepository {
@@ -12,15 +15,18 @@ abstract interface class ClassRepository {
   /// One class with its students, or null once deleted; updates live.
   Stream<SchoolClass?> watchClass(String classId);
 
-  /// Returns the new class's id.
-  Future<String> createClass(String name);
+  /// Returns the new class's id. A class created with [customScheme]
+  /// (college) is graded by it from the start.
+  Future<String> createClass(String name, {GradingScheme? customScheme});
   Future<void> renameClass(String classId, String name);
 
-  /// Saves the class's DepEd grading policy and subject group.
+  /// Saves the class's DepEd grading policy and subject group, or the
+  /// teacher's own [customScheme], which replaces them while set.
   Future<void> setGrading(
     String classId, {
     required String policyId,
     required String? subjectGroupId,
+    GradingScheme? customScheme,
   });
 
   /// Also deletes the class's students, tests and scores.
@@ -83,6 +89,7 @@ class DriftClassRepository implements ClassRepository {
             name: row.name,
             gradingPolicyId: row.gradingPolicy,
             subjectGroupId: row.subjectGroup,
+            customScheme: _readScheme(row.customScheme),
             students: [
               for (final s in students) Student(number: s.number, name: s.name),
             ],
@@ -91,7 +98,7 @@ class DriftClassRepository implements ClassRepository {
   }
 
   @override
-  Future<String> createClass(String name) async {
+  Future<String> createClass(String name, {GradingScheme? customScheme}) async {
     final id = _ids.next();
     await _db
         .into(_db.schoolClasses)
@@ -100,6 +107,7 @@ class DriftClassRepository implements ClassRepository {
             id: id,
             name: name,
             createdAt: DateTime.now(),
+            customScheme: Value(_writeScheme(customScheme)),
           ),
         );
     return id;
@@ -116,13 +124,29 @@ class DriftClassRepository implements ClassRepository {
     String classId, {
     required String policyId,
     required String? subjectGroupId,
+    GradingScheme? customScheme,
   }) =>
       (_db.update(_db.schoolClasses)..where((c) => c.id.equals(classId))).write(
         SchoolClassesCompanion(
           gradingPolicy: Value(policyId),
           subjectGroup: Value(subjectGroupId),
+          customScheme: Value(_writeScheme(customScheme)),
         ),
       );
+
+  static String? _writeScheme(GradingScheme? scheme) =>
+      scheme == null ? null : jsonEncode(scheme.toJson());
+
+  /// A saved scheme that can't be read (damaged, or from a newer app)
+  /// reads as none, so the class falls back to its DepEd policy.
+  static GradingScheme? _readScheme(String? json) {
+    if (json == null) return null;
+    try {
+      return GradingScheme.fromJson(jsonDecode(json));
+    } on FormatException {
+      return null;
+    }
+  }
 
   @override
   Future<void> deleteClass(String classId) =>

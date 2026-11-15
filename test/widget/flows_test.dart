@@ -44,6 +44,9 @@ void main() {
 
     await tester.tap(find.text('Add a class'));
     await tester.pumpAndSettle();
+    // First class ever: say where you teach.
+    await tester.tap(find.text('DepEd · Kinder to Grade 12'));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'Grade 8 – Mabini');
     await tester.tap(find.text('Add class'));
     await tester.pumpAndSettle();

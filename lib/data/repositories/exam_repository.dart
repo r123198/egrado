@@ -3,7 +3,6 @@ import 'package:egrado/data/database/app_database.dart';
 import 'package:egrado/data/repositories/id_generator.dart';
 import 'package:egrado/domain/exam.dart';
 import 'package:egrado/domain/overviews.dart';
-import 'package:egrado/grading/grading_policy.dart';
 
 /// Tests and their answer keys.
 abstract interface class ExamRepository {
@@ -109,8 +108,7 @@ class DriftExamRepository implements ExamRepository {
             answerKey: List<int?>.filled(questionCount, null),
             createdAt: DateTime.now(),
             gradingPeriod: Value(gradeTag?.period),
-            gradeComponent: Value(gradeTag?.component.name),
-            examPart: Value(gradeTag?.examPart?.name),
+            gradeCategory: Value(gradeTag?.categoryId),
           ),
         );
     return id;
@@ -125,8 +123,7 @@ class DriftExamRepository implements ExamRepository {
           choiceCount: Value(exam.choiceCount),
           answerKey: Value(exam.answerKey),
           gradingPeriod: Value(exam.gradeTag?.period),
-          gradeComponent: Value(exam.gradeTag?.component.name),
-          examPart: Value(exam.gradeTag?.examPart?.name),
+          gradeCategory: Value(exam.gradeTag?.categoryId),
         ),
       );
 
@@ -145,17 +142,10 @@ class DriftExamRepository implements ExamRepository {
     gradeTag: _toTag(row),
   );
 
-  /// Unknown names (from a newer app version) read as "not counted".
   static GradeTag? _toTag(ExamRow row) {
     final period = row.gradingPeriod;
-    final component = GradeComponent.values.asNameMap()[row.gradeComponent];
-    if (period == null || period < 1 || component == null) return null;
-    return GradeTag(
-      period: period,
-      component: component,
-      examPart: component == GradeComponent.exam
-          ? ExamPart.values.asNameMap()[row.examPart]
-          : null,
-    );
+    final category = row.gradeCategory;
+    if (period == null || period < 1 || category == null) return null;
+    return GradeTag(period: period, categoryId: category);
   }
 }

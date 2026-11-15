@@ -3,6 +3,7 @@ import 'package:egrado/data/repositories/class_record_repository.dart';
 import 'package:egrado/data/repositories/class_repository.dart';
 import 'package:egrado/data/repositories/exam_repository.dart';
 import 'package:egrado/data/repositories/result_repository.dart';
+import 'package:egrado/data/repositories/workspace_repository.dart';
 import 'package:egrado/services/class_record_engine.dart';
 import 'package:egrado/services/class_record_file_service.dart';
 import 'package:egrado/services/name_list_reader.dart';
@@ -41,6 +42,9 @@ List<SingleChildWidget> appProviders({
   ),
   Provider<ClassRecordRepository>(
     create: (c) => DriftClassRecordRepository(c.read<AppDatabase>()),
+  ),
+  Provider<WorkspaceRepository>(
+    create: (c) => DriftWorkspaceRepository(c.read<AppDatabase>()),
   ),
   Provider<PhotoService>(create: (_) => photos ?? ImagePickerPhotoService()),
   Provider<SheetReader>(create: (_) => reader ?? const BackgroundSheetReader()),

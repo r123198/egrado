@@ -1,3 +1,4 @@
+import 'package:egrado/grading/grading_scheme.dart';
 import 'package:egrado/grading/transmutation.dart';
 import 'package:meta/meta.dart';
 
@@ -244,3 +245,110 @@ GradingPolicy policyById(String? id) {
   }
   return do015Sy2026;
 }
+
+/// The category ids DepEd tests are saved under. They equal the enum
+/// names, so tests tagged before schemes existed still read correctly.
+abstract final class DepEdCategory {
+  static const writtenWork = 'writtenWork';
+  static const performanceTask = 'performanceTask';
+
+  /// The Exam group. Tests are counted under one of its parts.
+  static const exam = 'exam';
+  static const summativeTest1 = 'summativeTest1';
+  static const summativeTest2 = 'summativeTest2';
+  static const termExam = 'termExam';
+  static const quarterlyAssessment = 'quarterlyAssessment';
+
+  /// Every id that means "an exam", whichever DepEd order it came from.
+  static const examIds = {
+    exam,
+    summativeTest1,
+    summativeTest2,
+    termExam,
+    quarterlyAssessment,
+  };
+}
+
+/// The E-Class Record column kind a category id goes into, or null when
+/// the id isn't one of DepEd's.
+(GradeComponent, ExamPart?)? depEdSlot(String categoryId) {
+  final part = ExamPart.values.asNameMap()[categoryId];
+  if (part != null) return (GradeComponent.exam, part);
+  final component = GradeComponent.values.asNameMap()[categoryId];
+  return component == null ? null : (component, null);
+}
+
+const _do015Bands = [
+  GradeBand(90, 'Advancing'),
+  GradeBand(80, 'Benchmarking'),
+  GradeBand(75, 'Connecting'),
+  GradeBand(65, 'Developing'),
+  GradeBand(0, 'Emerging'),
+];
+
+const _do8Bands = [
+  GradeBand(90, 'Outstanding'),
+  GradeBand(85, 'Very Satisfactory'),
+  GradeBand(80, 'Satisfactory'),
+  GradeBand(75, 'Fairly Satisfactory'),
+  GradeBand(0, 'Did Not Meet Expectations'),
+];
+
+/// The report-card scale of [policy]: its transmutation, and the
+/// descriptors of DO 015 s. 2026 Table 11 or DO 8 s. 2015 Table 10.
+GradeScale depEdScale(GradingPolicy policy) => GradeScale(
+  bands: policy.transmutation == Transmutation.do8s2015
+      ? _do8Bands
+      : _do015Bands,
+  passingGrade: kPassingGrade,
+  transmutation: policy.transmutation,
+);
+
+/// [policy] with a subject's [weights], as a grading scheme: WW, PT and
+/// an Exam group whose parts share its weight (and are re-weighted while
+/// some haven't been given yet).
+GradingScheme depEdScheme(
+  GradingPolicy policy,
+  ComponentWeights weights,
+) => GradingScheme(
+  id: policy.id,
+  label: policy.label,
+  periodNames: [
+    for (var p = 1; p <= policy.periodCount; p++) policy.periodLabel(p),
+  ],
+  periodShortNames: [
+    for (var p = 1; p <= policy.periodCount; p++) '${policy.periodName[0]}$p',
+  ],
+  categories: [
+    GradeCategory(
+      id: DepEdCategory.writtenWork,
+      label: GradeComponent.writtenWork.label,
+      code: GradeComponent.writtenWork.code,
+      weight: weights.writtenWork.toDouble(),
+    ),
+    GradeCategory(
+      id: DepEdCategory.performanceTask,
+      label: GradeComponent.performanceTask.label,
+      code: GradeComponent.performanceTask.code,
+      weight: weights.performanceTask.toDouble(),
+    ),
+    GradeCategory(
+      id: DepEdCategory.exam,
+      label: GradeComponent.exam.label,
+      weight: weights.exam.toDouble(),
+      reweightsMissing: true,
+      children: [
+        for (final MapEntry(key: part, value: w) in policy.examParts.entries)
+          GradeCategory(
+            id: part.name,
+            label: part.label,
+            code: part.code,
+            weight: w.toDouble(),
+          ),
+      ],
+    ),
+  ],
+  scale: depEdScale(policy),
+  roundsSteps: true,
+  isDepEd: true,
+);

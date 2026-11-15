@@ -1,4 +1,4 @@
-import 'package:egrado/grading/grading_policy.dart';
+import 'package:egrado/grading/grading_scheme.dart';
 import 'package:egrado/grading/transmutation.dart';
 import 'package:meta/meta.dart';
 
@@ -7,26 +7,23 @@ import 'package:meta/meta.dart';
 @immutable
 class GradedActivity {
   GradedActivity({
-    required this.component,
+    required this.categoryId,
     required this.highestScore,
     required Map<int, int> scores,
-    this.examPart,
   }) : scores = Map.unmodifiable(scores);
 
-  final GradeComponent component;
-
-  /// Only for [GradeComponent.exam].
-  final ExamPart? examPart;
+  /// The scheme leaf this counts under.
+  final String categoryId;
 
   /// The Highest Possible Score (HPS).
   final int highestScore;
 
   /// Raw score per student number. A student without an entry gets 0, the
-  /// same as a blank cell in the E-Class Record.
+  /// same as a blank cell in a class record.
   final Map<int, int> scores;
 }
 
-/// Percentage Score (PS) and Weighted Score (WS) of one component.
+/// Percentage Score (PS) and Weighted Score (WS) of one top-level category.
 @immutable
 class ComponentScore {
   const ComponentScore({required this.percentage, required this.weighted});
@@ -40,141 +37,221 @@ class ComponentScore {
 class TermGrade {
   TermGrade({
     required this.studentNumber,
-    required Map<GradeComponent, ComponentScore> components,
-    required List<GradeComponent> missingComponents,
+    required Map<String, ComponentScore> components,
+    required List<GradeCategory> missingComponents,
     required this.missedActivities,
+    this.needsPreviousPeriod = false,
+    this.periodScore,
     this.initialGrade,
     this.grade,
   }) : components = Map.unmodifiable(components),
        missingComponents = List.unmodifiable(missingComponents);
 
   final int studentNumber;
-  final Map<GradeComponent, ComponentScore> components;
 
-  /// Components that count (weight above 0) but have no activity yet. While
-  /// any are missing there is no grade.
-  final List<GradeComponent> missingComponents;
+  /// Top-level category id → its score so far. A category with nothing
+  /// scored yet has no entry.
+  final Map<String, ComponentScore> components;
+
+  /// Categories that count (weight above 0) but have no activity yet.
+  /// While any are missing there is no grade.
+  final List<GradeCategory> missingComponents;
+
+  /// True when this period builds on the previous one and that one has no
+  /// grade yet.
+  final bool needsPreviousPeriod;
 
   /// Activities this student has no score for (counted as 0).
   final int missedActivities;
 
-  /// Sum of weighted scores; null while components are missing.
+  /// This period on its own, before the previous period is carried in;
+  /// null while categories are missing.
+  final double? periodScore;
+
+  /// The 0–100 grade before the scale: [periodScore], blended with the
+  /// previous period when the scheme carries it. Null until complete.
   final double? initialGrade;
 
-  /// Transmuted (or zero-based) grade; null while components are missing.
+  /// The reported whole-number grade; null until complete.
   final int? grade;
 
   bool get isComplete => grade != null;
 }
 
-/// Works out every student's grade for one grading period.
+/// Works out every student's grade for [period] (1-based).
 ///
-/// PS = raw ÷ HPS × 100 per component, WS = PS × weight, IG = ΣWS, then the
-/// policy's transmutation. Exams are combined per DO 015 s. 2026 para 45:
-/// each exam part gets its own PS, then the parts are weighted (30/30/40).
-List<TermGrade> computeTermGrades({
-  required GradingPolicy policy,
-  required ComponentWeights weights,
+/// Each leaf category turns its activities into a percentage (pooled, or
+/// the average of each activity's percentage). Groups weight their
+/// children; the top level's weighted scores add up to the period score.
+/// A scheme that carries the previous period blends it in from period 2
+/// on, then the scale gives the reported grade.
+List<TermGrade> computePeriodGrades({
+  required GradingScheme scheme,
+  required int period,
   required Iterable<int> studentNumbers,
-  required List<GradedActivity> activities,
+  required Map<int, List<GradedActivity>> activitiesByPeriod,
 }) {
-  final required = [
-    for (final c in GradeComponent.values)
-      if (weights.of(c) > 0) c,
-  ];
-  final missing = [
-    for (final c in required)
-      if (!activities.any((a) => a.component == c && a.highestScore > 0)) c,
-  ];
-  return [
-    for (final number in studentNumbers)
-      _gradeFor(number, policy, weights, activities, missing),
-  ];
+  final numbers = studentNumbers.toList();
+  var previous = <int, double?>{};
+  var grades = <TermGrade>[];
+  // A carried grade needs every earlier period worked out first.
+  for (var p = scheme.carriesPrevious ? 1 : period; p <= period; p++) {
+    final run = _PeriodRun(
+      scheme,
+      activitiesByPeriod[p] ?? const [],
+      carries: scheme.carriesPrevious && p > 1,
+    );
+    grades = [for (final n in numbers) run.gradeFor(n, previous[n])];
+    previous = {for (final g in grades) g.studentNumber: g.initialGrade};
+  }
+  return grades;
 }
 
-TermGrade _gradeFor(
-  int number,
-  GradingPolicy policy,
-  ComponentWeights weights,
-  List<GradedActivity> activities,
-  List<GradeComponent> missing,
-) {
-  final components = <GradeComponent, ComponentScore>{};
-  for (final c in GradeComponent.values) {
-    final ofComponent = [
-      for (final a in activities)
-        if (a.component == c && a.highestScore > 0) a,
-    ];
-    if (ofComponent.isEmpty) continue;
-    final ps = c == GradeComponent.exam
-        ? _examPercentage(number, policy, ofComponent)
-        : _pooledPercentage(number, ofComponent);
-    components[c] = ComponentScore(
-      percentage: ps,
-      weighted: _round2(ps * weights.of(c) / 100),
-    );
+/// One period's activities sorted under the scheme's leaves, and the
+/// grade maths over them.
+class _PeriodRun {
+  _PeriodRun(
+    this.scheme,
+    List<GradedActivity> activities, {
+    required this.carries,
+  }) {
+    final leafIds = {for (final l in scheme.leaves) l.id};
+    for (final a in activities) {
+      if (a.highestScore > 0 && leafIds.contains(a.categoryId)) {
+        (_byLeaf[a.categoryId] ??= []).add(a);
+      }
+    }
+    _missing = _missingIn(scheme.categories, reweights: false);
   }
-  final missed = activities
-      .where((a) => a.highestScore > 0 && !a.scores.containsKey(number))
-      .length;
-  if (missing.isNotEmpty) {
+
+  final GradingScheme scheme;
+
+  /// Whether the previous period's grade is blended in.
+  final bool carries;
+  final _byLeaf = <String, List<GradedActivity>>{};
+  late final List<GradeCategory> _missing;
+
+  TermGrade gradeFor(int number, double? previousGrade) {
+    final total = _totalWeight(scheme.categories);
+    final components = <String, ComponentScore>{};
+    for (final c in scheme.categories) {
+      final ps = _percentage(c, number);
+      if (ps == null) continue;
+      components[c.id] = ComponentScore(
+        percentage: ps,
+        weighted: total == 0 ? 0 : _round(ps * c.weight / total),
+      );
+    }
+    final missed = _byLeaf.values
+        .expand((list) => list)
+        .where((a) => !a.scores.containsKey(number))
+        .length;
+    final score = _missing.isEmpty
+        ? components.values.fold<double>(0, (sum, c) => sum + c.weighted)
+        : null;
+    final needsPrevious = carries && previousGrade == null;
+    final ig = score == null || needsPrevious
+        ? null
+        : _blend(previousGrade, score);
     return TermGrade(
       studentNumber: number,
       components: components,
-      missingComponents: missing,
+      missingComponents: _missing,
       missedActivities: missed,
+      needsPreviousPeriod: needsPrevious,
+      periodScore: score,
+      initialGrade: ig,
+      grade: ig == null ? null : scheme.scale.grade(ig),
     );
   }
-  final ig = components.values.fold<double>(0, (sum, c) => sum + c.weighted);
-  return TermGrade(
-    studentNumber: number,
-    components: components,
-    missingComponents: const [],
-    missedActivities: missed,
-    initialGrade: ig,
-    grade: transmute(ig, policy.transmutation),
-  );
-}
 
-/// Rounds to 2 decimals, as the official E-Class Records do at every step
-/// (PS, then WS): `ROUND(raw/HPS*100, 2)`, `ROUND(PS*weight, 2)`.
-double _round2(double value) => toHundredths(value) / 100;
+  double _blend(double? previousGrade, double score) {
+    if (!carries || previousGrade == null) return score;
+    final total = scheme.previousWeight + scheme.currentWeight;
+    return _round(
+      (previousGrade * scheme.previousWeight + score * scheme.currentWeight) /
+          total,
+    );
+  }
 
-/// Σ raw ÷ Σ HPS × 100, rounded to 2 decimals.
-double _pooledPercentage(int number, List<GradedActivity> activities) {
-  var raw = 0;
-  var highest = 0;
-  for (final a in activities) {
-    raw += (a.scores[number] ?? 0).clamp(0, a.highestScore);
-    highest += a.highestScore;
+  /// Weighted categories with nothing scored. Inside a group that
+  /// re-weights, a missing child doesn't hold the grade back.
+  List<GradeCategory> _missingIn(
+    List<GradeCategory> siblings, {
+    required bool reweights,
+  }) {
+    final missing = <GradeCategory>[];
+    for (final c in siblings) {
+      if (c.weight <= 0) continue;
+      final hasScores = c.leaves.any((l) => _byLeaf.containsKey(l.id));
+      if (!hasScores) {
+        if (!reweights) missing.add(c);
+      } else if (!c.isLeaf) {
+        missing.addAll(_missingIn(c.children, reweights: c.reweightsMissing));
+      }
+    }
+    return missing;
   }
-  return highest == 0 ? 0 : _round2(raw * 100 / highest);
-}
 
-/// Each exam part's PS, weighted by the policy (ST1 30, ST2 30, TE 40).
-/// Parts not given yet are left out and the rest re-weighted, so a term
-/// with only ST1 so far still shows a sensible running exam score.
-double _examPercentage(
-  int number,
-  GradingPolicy policy,
-  List<GradedActivity> exams,
-) {
-  final byPart = <ExamPart, List<GradedActivity>>{};
-  for (final e in exams) {
-    final part = e.examPart;
-    if (part == null || !policy.examParts.containsKey(part)) continue;
-    (byPart[part] ??= []).add(e);
+  /// The category's percentage so far, or null with nothing scored.
+  double? _percentage(GradeCategory c, int number) {
+    if (!c.isLeaf) return _weighted(c.children, number);
+    final activities = _byLeaf[c.id];
+    if (activities == null) return null;
+    return switch (c.combine) {
+      CombineRule.pooled => _pooled(number, activities),
+      CombineRule.averageOfPercents => _average(number, activities),
+    };
   }
-  if (byPart.isEmpty) return _pooledPercentage(number, exams);
-  var total = 0.0;
-  var weightSum = 0;
-  for (final MapEntry(key: part, value: list) in byPart.entries) {
-    final w = policy.examParts[part] ?? 0;
-    total += _round2(_pooledPercentage(number, list) * w / 100);
-    weightSum += w;
+
+  /// Children's percentages by weight. Children with nothing scored are
+  /// left out and the rest re-weighted, so there is always a running
+  /// score (whether it is final is [_missing]'s call).
+  double? _weighted(List<GradeCategory> children, int number) {
+    final all = _totalWeight(children);
+    var total = 0.0;
+    var present = 0.0;
+    for (final child in children) {
+      final ps = _percentage(child, number);
+      if (ps == null) continue;
+      total += _round(ps * child.weight / all);
+      present += child.weight;
+    }
+    if (present <= 0) return null;
+    return present == all ? _round(total) : _round(total * all / present);
   }
-  if (weightSum == 0) return 0;
-  return weightSum == 100 ? _round2(total) : _round2(total * 100 / weightSum);
+
+  /// Σ raw ÷ Σ HPS × 100.
+  double _pooled(int number, List<GradedActivity> activities) {
+    var raw = 0;
+    var highest = 0;
+    for (final a in activities) {
+      raw += _score(a, number);
+      highest += a.highestScore;
+    }
+    return _round(raw * 100 / highest);
+  }
+
+  /// The average of each activity's raw ÷ HPS × 100.
+  double _average(int number, List<GradedActivity> activities) {
+    var sum = 0.0;
+    for (final a in activities) {
+      sum += _round(_score(a, number) * 100 / a.highestScore);
+    }
+    return _round(sum / activities.length);
+  }
+
+  int _score(GradedActivity a, int number) =>
+      (a.scores[number] ?? 0).clamp(0, a.highestScore);
+
+  /// To 2 decimals at every step when the scheme asks for it, as the
+  /// official E-Class Records do: `ROUND(raw/HPS*100, 2)`,
+  /// `ROUND(PS*weight, 2)`.
+  double _round(double value) =>
+      scheme.roundsSteps ? toHundredths(value) / 100 : value;
+
+  static double _totalWeight(List<GradeCategory> categories) =>
+      categories.fold<double>(0, (sum, c) => sum + c.weight);
 }
 
 /// Final grade: the average of the period grades, rounded to a whole
@@ -184,22 +261,3 @@ int? finalGrade(List<int?> periodGrades) {
   final sum = periodGrades.fold<int>(0, (s, g) => s + (g ?? 0));
   return roundGrade(sum / periodGrades.length);
 }
-
-/// The report-card descriptor: DO 015 s. 2026 Table 11, or DO 8 s. 2015
-/// Table 10 for schools still on it.
-String descriptor(int grade, GradingPolicy policy) =>
-    policy.transmutation == Transmutation.do8s2015
-    ? switch (grade) {
-        >= 90 => 'Outstanding',
-        >= 85 => 'Very Satisfactory',
-        >= 80 => 'Satisfactory',
-        >= 75 => 'Fairly Satisfactory',
-        _ => 'Did Not Meet Expectations',
-      }
-    : switch (grade) {
-        >= 90 => 'Advancing',
-        >= 80 => 'Benchmarking',
-        >= 75 => 'Connecting',
-        >= 65 => 'Developing',
-        _ => 'Emerging',
-      };

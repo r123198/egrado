@@ -1,4 +1,5 @@
 import 'package:egrado/data/repositories/class_repository.dart';
+import 'package:egrado/data/repositories/workspace_repository.dart';
 import 'package:egrado/domain/overviews.dart';
 import 'package:egrado/ui/class_detail/class_view.dart';
 import 'package:egrado/ui/core/loading_scaffold.dart';
@@ -7,6 +8,7 @@ import 'package:egrado/ui/core/navigation.dart';
 import 'package:egrado/ui/home/home_view_model.dart';
 import 'package:egrado/ui/theme/app_theme.dart';
 import 'package:egrado/ui/widgets/common.dart';
+import 'package:egrado/ui/widgets/teaching_level_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -17,7 +19,10 @@ class ClassesPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (context) => HomeViewModel(context.read<ClassRepository>()),
+      create: (context) => HomeViewModel(
+        context.read<ClassRepository>(),
+        context.read<WorkspaceRepository>(),
+      ),
       child: const _HomeView(),
     );
   }
@@ -28,14 +33,21 @@ class _HomeView extends StatelessWidget {
 
   Future<void> _addClass(BuildContext context) async {
     final viewModel = context.read<HomeViewModel>();
+    // Asked once, before the first class; remembered when it is added.
+    final chosenLevel = viewModel.needsLevel
+        ? await askTeachingLevel(context)
+        : null;
+    if (!context.mounted) return;
+    if (viewModel.needsLevel && chosenLevel == null) return;
+    final level = chosenLevel ?? viewModel.level;
     final name = await askForText(
       context,
       title: 'New class',
-      label: 'Class name, e.g. Grade 7 – Rizal',
+      label: 'Class name, ${level.classNameHint}',
       confirmLabel: 'Add class',
     );
     if (name == null || !context.mounted) return;
-    final id = await viewModel.addClass(name);
+    final id = await viewModel.addClass(name, chosenLevel: chosenLevel);
     if (!context.mounted) return;
     if (id == null) {
       showMessage(context, Messages.saveFailed);

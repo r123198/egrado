@@ -1,24 +1,27 @@
 import 'package:egrado/data/repositories/class_repository.dart';
 import 'package:egrado/data/repositories/exam_repository.dart';
 import 'package:egrado/domain/exam.dart';
+import 'package:egrado/domain/grade_book.dart';
 import 'package:egrado/grading/grading_policy.dart';
+import 'package:egrado/grading/grading_scheme.dart';
 import 'package:egrado/omr/sheet_layout.dart';
 import 'package:egrado/ui/core/view_model.dart';
 
 enum FormSaveOutcome { saved, invalid, failed }
 
-/// One choice under "Counts toward": not counted, WW, PT, or an exam part.
+/// One choice under "Counts toward": a category of the class's grading
+/// scheme, or not counted.
 class GradeKind {
-  const GradeKind(this.label, [this.component, this.examPart]);
+  const GradeKind(this.label, [this.categoryId]);
 
   static const notCounted = GradeKind('Not counted');
 
   final String label;
-  final GradeComponent? component;
-  final ExamPart? examPart;
 
-  bool matches(GradeTag? tag) =>
-      tag?.component == component && tag?.examPart == examPart;
+  /// Null for [notCounted].
+  final String? categoryId;
+
+  bool matches(GradeTag? tag) => tag?.categoryId == categoryId;
 }
 
 /// Creating a new test, or changing an existing test's settings.
@@ -35,7 +38,8 @@ class ExamFormViewModel extends ViewModel {
        _tag = existing == null ? _defaultTag : existing.gradeTag {
     if (classes != null) {
       listen(classes.watchClass(classId), (c) {
-        _policy = c?.gradingPolicy ?? _policy;
+        _scheme = c?.scheme ?? _scheme;
+        _useSchemeDefault();
         notifyListeners();
       });
     }
@@ -46,11 +50,7 @@ class ExamFormViewModel extends ViewModel {
         for (final o in list) {
           final period = o.exam.gradeTag?.period;
           if (period != null) {
-            _tag = GradeTag(
-              period: period,
-              component: _tag?.component ?? GradeComponent.writtenWork,
-              examPart: _tag?.examPart,
-            );
+            _tag = _tag?.copyWith(period: period);
             notifyListeners();
             return;
           }
@@ -61,8 +61,18 @@ class ExamFormViewModel extends ViewModel {
 
   static const _defaultTag = GradeTag(
     period: 1,
-    component: GradeComponent.writtenWork,
+    categoryId: DepEdCategory.writtenWork,
   );
+
+  /// A new test the teacher hasn't tagged yet starts under the scheme's
+  /// first category (Written Work for DepEd, Quizzes for college).
+  void _useSchemeDefault() {
+    final tag = _tag;
+    if (!isNew || _tagTouched || tag == null) return;
+    if (_scheme.leaf(tag.categoryId) != null) return;
+    final first = _scheme.leaves.firstOrNull;
+    if (first != null) _tag = tag.copyWith(categoryId: first.id);
+  }
 
   static const quickCounts = [10, 15, 20, 25, 30, 40, 50, 60];
   static const choiceOptions = [3, 4, 5];
@@ -78,55 +88,59 @@ class ExamFormViewModel extends ViewModel {
   String? _savedExamId;
   GradeTag? _tag;
   bool _tagTouched = false;
-  GradingPolicy _policy = policyById(null);
+  GradingScheme _scheme = _fallbackScheme;
 
-  GradingPolicy get policy => _policy;
+  static final _fallbackScheme = depEdScheme(
+    do015Sy2026,
+    do015Sy2026.subjects.first.weights,
+  );
+
+  GradingScheme get scheme => _scheme;
 
   /// Null when the test doesn't count toward the grade.
   GradeTag? get gradeTag => _tag;
 
-  /// The selected term/quarter (kept even while "Not counted").
-  int get period => (_tag?.period ?? _lastPeriod).clamp(1, _policy.periodCount);
+  /// The selected grading period (kept even while "Not counted").
+  int get period => (_tag?.period ?? _lastPeriod).clamp(1, _scheme.periodCount);
   int _lastPeriod = 1;
 
   List<GradeKind> get kinds => [
-    const GradeKind('Written Work', GradeComponent.writtenWork),
-    const GradeKind('Performance Task', GradeComponent.performanceTask),
-    for (final part in _policy.examParts.keys)
-      GradeKind(part.label, GradeComponent.exam, part),
+    for (final leaf in _scheme.leaves) GradeKind(leaf.label, leaf.id),
     GradeKind.notCounted,
   ];
 
-  GradeKind get kind => kinds.firstWhere(
-    (k) => k.matches(_tag),
-    orElse: () => GradeKind.notCounted,
-  );
+  /// The chosen kind, as these rules count it: a DepEd exam tagged under
+  /// another DepEd order shows as the exam it counts as, and a test
+  /// counted under a category these rules don't have shows as "Not
+  /// counted", which is how it is being graded.
+  GradeKind get kind {
+    final tag = switch (_tag) {
+      final t? => effectiveTag(t, _scheme),
+      null => null,
+    };
+    return kinds.firstWhere(
+      (k) => k.matches(tag),
+      orElse: () => GradeKind.notCounted,
+    );
+  }
+
+  /// False for practice tests and for ones these rules can't place.
+  bool get isCounted => kind.categoryId != null;
 
   void setPeriod(int value) {
     _tagTouched = true;
-    _lastPeriod = value.clamp(1, _policy.periodCount);
-    final tag = _tag;
-    if (tag != null) {
-      _tag = GradeTag(
-        period: _lastPeriod,
-        component: tag.component,
-        examPart: tag.examPart,
-      );
-    }
+    _lastPeriod = value.clamp(1, _scheme.periodCount);
+    _tag = _tag?.copyWith(period: _lastPeriod);
     notifyListeners();
   }
 
   void setKind(GradeKind value) {
     _tagTouched = true;
-    final component = value.component;
+    final categoryId = value.categoryId;
     _lastPeriod = period;
-    _tag = component == null
+    _tag = categoryId == null
         ? null
-        : GradeTag(
-            period: _lastPeriod,
-            component: component,
-            examPart: value.examPart,
-          );
+        : GradeTag(period: _lastPeriod, categoryId: categoryId);
     notifyListeners();
   }
 
@@ -195,13 +209,7 @@ class ExamFormViewModel extends ViewModel {
     return ok ? FormSaveOutcome.saved : FormSaveOutcome.failed;
   }
 
-  /// The tag with its period inside the policy's range.
-  GradeTag? get _clampedTag => switch (_tag) {
-    final t? => GradeTag(
-      period: t.period.clamp(1, _policy.periodCount),
-      component: t.component,
-      examPart: t.examPart,
-    ),
-    null => null,
-  };
+  /// The tag with its period inside the scheme's range.
+  GradeTag? get _clampedTag =>
+      _tag?.copyWith(period: _tag?.period.clamp(1, _scheme.periodCount));
 }

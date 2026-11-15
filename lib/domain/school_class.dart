@@ -1,4 +1,5 @@
 import 'package:egrado/grading/grading_policy.dart';
+import 'package:egrado/grading/grading_scheme.dart';
 import 'package:egrado/omr/sheet_layout.dart';
 import 'package:meta/meta.dart';
 
@@ -19,6 +20,7 @@ class SchoolClass {
     List<Student> students = const [],
     this.gradingPolicyId,
     this.subjectGroupId,
+    this.customScheme,
   }) : students = List.unmodifiable(
          [...students]..sort((a, b) => a.number.compareTo(b.number)),
        );
@@ -39,6 +41,23 @@ class SchoolClass {
     final id? => gradingPolicy.subject(id),
     null => null,
   };
+
+  /// The teacher's own rules (college, or any edited scheme). When set
+  /// it replaces the DepEd policy and subject.
+  final GradingScheme? customScheme;
+
+  /// False until the teacher has picked a subject or their own scheme, so
+  /// the weights aren't known yet.
+  bool get hasGradingSetup => customScheme != null || subjectGroup != null;
+
+  /// The rules this class is graded by. Before the subject is picked the
+  /// DepEd weights are a stand-in: good for naming periods and categories,
+  /// not for grades (see [hasGradingSetup]).
+  GradingScheme get scheme {
+    final policy = gradingPolicy;
+    return customScheme ??
+        depEdScheme(policy, (subjectGroup ?? policy.subjects.first).weights);
+  }
 
   /// Always sorted by student number.
   final List<Student> students;

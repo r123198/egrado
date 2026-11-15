@@ -124,7 +124,8 @@ class FillRecordViewModel extends ViewModel {
 
   /// Tests that will be written (counted, with scanned papers).
   List<RecordActivity> get activities => recordActivities(
-    _schoolClass?.gradingPolicy ?? policyById(null),
+    _schoolClass?.scheme ??
+        depEdScheme(do015Sy2026, do015Sy2026.subjects.first.weights),
     _exams ?? const [],
     _results ?? const [],
   );

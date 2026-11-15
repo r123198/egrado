@@ -9,9 +9,11 @@ import 'package:egrado/data/repositories/class_record_repository.dart';
 import 'package:egrado/data/repositories/class_repository.dart';
 import 'package:egrado/data/repositories/exam_repository.dart';
 import 'package:egrado/data/repositories/result_repository.dart';
+import 'package:egrado/data/repositories/workspace_repository.dart';
 import 'package:egrado/domain/exam.dart';
 import 'package:egrado/domain/school_class.dart';
 import 'package:egrado/grading/grading_policy.dart';
+import 'package:egrado/grading/scheme_presets.dart';
 import 'package:egrado/services/class_record_engine.dart';
 import 'package:egrado/services/class_record_file_service.dart';
 import 'package:egrado/ui/core/view_model.dart';
@@ -74,7 +76,7 @@ class SyncEngine implements ClassRecordEngine {
   );
 }
 
-const _ww1 = GradeTag(period: 1, component: GradeComponent.writtenWork);
+const _ww1 = GradeTag(period: 1, categoryId: DepEdCategory.writtenWork);
 
 void main() {
   late AppDatabase db;
@@ -139,11 +141,7 @@ void main() {
 
   group('storage', () {
     test('a test keeps what it counts toward', () async {
-      const tag = GradeTag(
-        period: 2,
-        component: GradeComponent.exam,
-        examPart: ExamPart.termExam,
-      );
+      const tag = GradeTag(period: 2, categoryId: DepEdCategory.termExam);
       final id = await addTest('Term exam', tag);
       final saved = await exams.watchExam(id).first;
       expect(saved?.gradeTag, tag);
@@ -196,6 +194,7 @@ void main() {
         classes: classes,
         exams: exams,
         records: records,
+        workspace: DriftWorkspaceRepository(db),
       ),
     );
 
@@ -216,13 +215,13 @@ void main() {
       await _settle();
       final first = vm.lines.first;
       expect(
-        first.grade.components[GradeComponent.writtenWork]!.percentage,
+        first.grade.components[DepEdCategory.writtenWork]!.percentage,
         100,
       );
       expect(first.grade.grade, isNull);
-      expect(vm.missingComponents, [
-        GradeComponent.performanceTask,
-        GradeComponent.exam,
+      expect(vm.missingComponents.map((c) => c.id), [
+        DepEdCategory.performanceTask,
+        DepEdCategory.exam,
       ]);
     });
 
@@ -234,15 +233,11 @@ void main() {
       );
       final pt = await addTest(
         'PT',
-        const GradeTag(period: 1, component: GradeComponent.performanceTask),
+        const GradeTag(period: 1, categoryId: DepEdCategory.performanceTask),
       );
       final te = await addTest(
         'TE',
-        const GradeTag(
-          period: 1,
-          component: GradeComponent.exam,
-          examPart: ExamPart.termExam,
-        ),
+        const GradeTag(period: 1, categoryId: DepEdCategory.termExam),
       );
       for (final id in [pt, te]) {
         await results.saveResult(testResult(1, [0, 1, 2, 3, 0], exam: id));
@@ -258,7 +253,7 @@ void main() {
     test('flags tests set to a term the rules no longer have', () async {
       await addTest(
         'Q4 exam',
-        const GradeTag(period: 4, component: GradeComponent.writtenWork),
+        const GradeTag(period: 4, categoryId: DepEdCategory.writtenWork),
       );
       final vm = make();
       await _settle();
@@ -395,8 +390,7 @@ void main() {
         testExam().copyWith(
           gradeTag: () => const GradeTag(
             period: 1,
-            component: GradeComponent.exam,
-            examPart: ExamPart.quarterlyAssessment,
+            categoryId: DepEdCategory.quarterlyAssessment,
           ),
         ),
       );
@@ -448,12 +442,107 @@ void main() {
     });
   });
 
+  group('college grading', () {
+    Future<void> useCollege() => classes.setGrading(
+      'c1',
+      policyId: do015Sy2026.id,
+      subjectGroupId: null,
+      customScheme: collegeScheme,
+    );
+
+    GradesViewModel make() => track(
+      GradesViewModel(
+        classId: 'c1',
+        classes: classes,
+        exams: exams,
+        records: records,
+        workspace: DriftWorkspaceRepository(db),
+      ),
+    );
+
+    test(
+      'a class keeps its own scheme, and the E-Class fill is DepEd-only',
+      () async {
+        await useCollege();
+        final vm = make();
+        await _settle();
+        expect(vm.hasGradingSetup, isTrue);
+        expect(vm.scheme.isDepEd, isFalse);
+        expect(vm.scheme.periodNames, ['Prelim', 'Midterm', 'Finals']);
+        expect(vm.customScheme?.id, collegeScheme.id);
+      },
+    );
+
+    test('tests tagged under DepEd need re-tagging after the switch', () async {
+      await useCollege();
+      final vm = make();
+      await _settle();
+      // The seeded test counts as Written Work, which college doesn't have.
+      expect(vm.outOfRangeCount, 1);
+      expect(vm.lines.first.grade.components, isEmpty);
+    });
+
+    test('grades Prelim, then carries it into Midterm', () async {
+      await useCollege();
+      await exams.updateExam(
+        testExam().copyWith(
+          gradeTag: () => const GradeTag(period: 1, categoryId: 'quizzes'),
+        ),
+      );
+      final vm = make();
+      await _settle();
+      expect(vm.missingComponents.map((c) => c.id), [
+        'assignments',
+        'term_exam',
+      ]);
+
+      for (final id in ['assignments', 'term_exam']) {
+        final examId = await addTest(id, GradeTag(period: 1, categoryId: id));
+        await results.saveResult(testResult(1, [0, 1, 2, 3, 0], exam: examId));
+      }
+      await _settle();
+      // Student 1 has 5/5 everywhere: 100 → 1.00.
+      final prelim = vm.lines.first.grade;
+      expect(prelim.grade, 100);
+      expect(vm.scheme.scale.mark(100), '1.00');
+
+      vm.selectPeriod(2);
+      expect(vm.lines.first.grade.grade, isNull);
+      expect(vm.missingComponents, isNotEmpty);
+    });
+
+    test('going back to DepEd clears the custom scheme', () async {
+      await useCollege();
+      final vm = make();
+      await _settle();
+      await vm.setGrading(do015Sy2026, do015Sy2026.subject('core'));
+      await _settle();
+      expect(vm.customScheme, isNull);
+      expect(vm.scheme.isDepEd, isTrue);
+    });
+
+    test('a new test starts under the first college category', () async {
+      await useCollege();
+      final vm = track(
+        ExamFormViewModel(classId: 'c1', exams: exams, classes: classes),
+      );
+      await _settle();
+      expect(vm.kinds.map((k) => k.label), [
+        'Quizzes & Activities',
+        'Assignments',
+        'Exam',
+        'Not counted',
+      ]);
+      expect(vm.kind.categoryId, 'quizzes');
+    });
+  });
+
   group('ExamFormViewModel grade tag', () {
     test('a new test counts as Written Work in the latest term', () async {
       await exams.updateExam(
         testExam().copyWith(
           gradeTag: () =>
-              const GradeTag(period: 2, component: GradeComponent.writtenWork),
+              const GradeTag(period: 2, categoryId: DepEdCategory.writtenWork),
         ),
       );
       final vm = track(
@@ -461,7 +550,7 @@ void main() {
       );
       await _settle();
       expect(vm.period, 2);
-      expect(vm.kind.component, GradeComponent.writtenWork);
+      expect(vm.kind.categoryId, DepEdCategory.writtenWork);
     });
 
     test('offers ST1/ST2/TE under DO 015 and QA under DO 8', () async {
@@ -469,10 +558,13 @@ void main() {
         ExamFormViewModel(classId: 'c1', exams: exams, classes: classes),
       );
       await _settle();
-      expect(vm.kinds.map((k) => k.examPart).whereType<ExamPart>(), [
-        ExamPart.summativeTest1,
-        ExamPart.summativeTest2,
-        ExamPart.termExam,
+      expect(vm.kinds.map((k) => k.categoryId), [
+        DepEdCategory.writtenWork,
+        DepEdCategory.performanceTask,
+        DepEdCategory.summativeTest1,
+        DepEdCategory.summativeTest2,
+        DepEdCategory.termExam,
+        null,
       ]);
       await classes.setGrading(
         'c1',
@@ -480,10 +572,13 @@ void main() {
         subjectGroupId: null,
       );
       await _settle();
-      expect(vm.kinds.map((k) => k.examPart).whereType<ExamPart>(), [
-        ExamPart.quarterlyAssessment,
+      expect(vm.kinds.map((k) => k.categoryId), [
+        DepEdCategory.writtenWork,
+        DepEdCategory.performanceTask,
+        DepEdCategory.quarterlyAssessment,
+        null,
       ]);
-      expect(vm.policy.periodCount, 4);
+      expect(vm.scheme.periodCount, 4);
     });
 
     test('saves the chosen tag, or none for practice', () async {
@@ -493,17 +588,15 @@ void main() {
       await _settle();
       vm
         ..setTitle('Unit test')
-        ..setKind(vm.kinds.firstWhere((k) => k.examPart == ExamPart.termExam))
+        ..setKind(
+          vm.kinds.firstWhere((k) => k.categoryId == DepEdCategory.termExam),
+        )
         ..setPeriod(3);
       await vm.save();
       final saved = await exams.watchExam(vm.savedExamId!).first;
       expect(
         saved?.gradeTag,
-        const GradeTag(
-          period: 3,
-          component: GradeComponent.exam,
-          examPart: ExamPart.termExam,
-        ),
+        const GradeTag(period: 3, categoryId: DepEdCategory.termExam),
       );
 
       final practice = track(

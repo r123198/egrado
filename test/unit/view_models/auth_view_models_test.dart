@@ -1,3 +1,7 @@
+import 'package:egrado/data/repositories/class_repository.dart';
+import 'package:egrado/data/repositories/workspace_repository.dart';
+import 'package:egrado/domain/teaching_level.dart';
+import 'package:egrado/ui/home/home_view_model.dart';
 import 'package:egrado/domain/app_user.dart';
 import 'package:egrado/ui/account/account_view_model.dart';
 import 'package:egrado/ui/auth/sign_in_view_model.dart';
@@ -7,6 +11,7 @@ import 'package:egrado/ui/shell/shell_view_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../support/fake_auth.dart';
+import '../../support/fixtures.dart';
 
 Future<void> _settle() => Future<void>.delayed(Duration.zero);
 
@@ -158,6 +163,54 @@ void main() {
       vm.dispose();
     });
   });
+
+  test('Account shows and changes where the teacher teaches', () async {
+    final db = memoryDatabase();
+    addTearDown(db.close);
+    final workspace = DriftWorkspaceRepository(db);
+    final vm = AccountViewModel(
+      FakeAuthRepository(signedIn: teacher),
+      workspace: workspace,
+    );
+    await _settle();
+    expect(vm.level, isNull);
+    expect(await vm.setLevel(TeachingLevel.college), isTrue);
+    await _settle();
+    expect(vm.level, TeachingLevel.college);
+    expect(await workspace.watchLevel().first, TeachingLevel.college);
+    vm.dispose();
+  });
+
+  test(
+    'new classes follow the workspace: college ones are ready to grade',
+    () async {
+      final db = memoryDatabase();
+      addTearDown(db.close);
+      final classes = DriftClassRepository(db);
+      final vm = HomeViewModel(classes, DriftWorkspaceRepository(db));
+      await _settle();
+      expect(vm.needsLevel, isTrue);
+
+      final collegeId = await vm.addClass(
+        'NCM 107',
+        chosenLevel: TeachingLevel.college,
+      );
+      await _settle();
+      expect(vm.needsLevel, isFalse);
+      expect(vm.level, TeachingLevel.college);
+      final college = await classes.watchClass(collegeId!).first;
+      expect(college?.hasGradingSetup, isTrue);
+      expect(college?.scheme.periodNames.first, 'Prelim');
+
+      await DriftWorkspaceRepository(db).setLevel(TeachingLevel.depEd);
+      await _settle();
+      final depEdId = await vm.addClass('Grade 7');
+      final depEd = await classes.watchClass(depEdId!).first;
+      expect(depEd?.customScheme, isNull);
+      expect(depEd?.scheme.isDepEd, isTrue);
+      vm.dispose();
+    },
+  );
 
   test('tapping the current tab asks to go back to its top', () {
     final vm = ShellViewModel();

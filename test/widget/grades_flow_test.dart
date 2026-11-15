@@ -30,13 +30,9 @@ void main() {
     await pumpPage(tester, const GradesPage('c1'), seed: seedSchool);
     await tester.tap(find.text('Choose the subject'));
     await tester.pumpAndSettle();
-    // The sheet is the topmost scrollable.
-    await tester.scrollUntilVisible(
-      find.text('MAPEH, EPP/TLE'),
-      200,
-      scrollable: find.byType(Scrollable).last,
-    );
-    await tester.tap(find.text('MAPEH, EPP/TLE'));
+    await tester.tap(find.byKey(const ValueKey('subject-do015_2026')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('MAPEH, EPP/TLE').last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
@@ -69,7 +65,7 @@ void main() {
           testExam().copyWith(
             gradeTag: () => const GradeTag(
               period: 1,
-              component: GradeComponent.writtenWork,
+              categoryId: DepEdCategory.writtenWork,
             ),
           ),
         );
@@ -99,17 +95,22 @@ void main() {
       size: const Size(400, 1400),
     );
     await tester.enterText(find.byType(TextFormField), 'Science TE');
-    final page = find.byType(Scrollable).first;
-    await tester.scrollUntilVisible(
-      find.text('Term Exam'),
-      200,
-      scrollable: page,
-    );
-    await tester.tap(find.text('Term Exam'));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Term 2'), 200, scrollable: page);
-    await tester.tap(find.text('Term 2'));
-    await tester.pumpAndSettle();
+    Future<void> pick(String fieldKeyStart, String option) async {
+      final field = find.byWidgetPredicate(
+        (w) => switch (w.key) {
+          ValueKey<String>(:final value) => value.startsWith(fieldKeyStart),
+          _ => false,
+        },
+      );
+      await tester.ensureVisible(field);
+      await tester.tap(field);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(option).last);
+      await tester.pumpAndSettle();
+    }
+
+    await pick('counts-as-', 'Term Exam');
+    await pick('counts-in-', 'Term 2');
     expect(
       find.text('Scores go to Term Exam in Term 2 of your class record.'),
       findsOneWidget,
@@ -124,11 +125,7 @@ void main() {
     final created = all.firstWhere((o) => o.exam.title == 'Science TE');
     expect(
       created.exam.gradeTag,
-      const GradeTag(
-        period: 2,
-        component: GradeComponent.exam,
-        examPart: ExamPart.termExam,
-      ),
+      const GradeTag(period: 2, categoryId: DepEdCategory.termExam),
     );
   });
 

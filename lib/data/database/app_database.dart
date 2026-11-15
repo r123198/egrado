@@ -14,6 +14,7 @@ part 'app_database.g.dart';
     ExamResults,
     RecordNames,
     RecordPlacements,
+    Settings,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -29,7 +30,7 @@ class AppDatabase extends _$AppDatabase {
       uid.replaceAll(RegExp('[^A-Za-z0-9_-]'), '_');
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -40,10 +41,30 @@ class AppDatabase extends _$AppDatabase {
         await m.addColumn(schoolClasses, schoolClasses.gradingPolicy);
         await m.addColumn(schoolClasses, schoolClasses.subjectGroup);
         await m.addColumn(exams, exams.gradingPeriod);
-        await m.addColumn(exams, exams.gradeComponent);
-        await m.addColumn(exams, exams.examPart);
+        await m.addColumn(exams, exams.gradeCategory);
         await m.createTable(recordNames);
         await m.createTable(recordPlacements);
+      } else if (from < 3) {
+        // Version 2 saved a DepEd component plus an exam part; a test now
+        // counts under one category id of the class's grading scheme.
+        await m.alterTable(
+          TableMigration(
+            exams,
+            newColumns: [exams.gradeCategory],
+            columnTransformer: {
+              exams.gradeCategory: const CustomExpression<String>(
+                "CASE WHEN grade_component = 'exam' "
+                "THEN COALESCE(exam_part, 'exam') ELSE grade_component END",
+              ),
+            },
+          ),
+        );
+      }
+      if (from < 3) {
+        // Grading schemes: a class can carry its own rules (college).
+        await m.addColumn(schoolClasses, schoolClasses.customScheme);
+        // Whether the teacher's workspace is set up for DepEd or college.
+        await m.createTable(settings);
       }
     },
     // Deleting a class must also delete its students, tests and scores.

@@ -62,6 +62,27 @@ or the DO 8 Quarterly Assessment). Set it when you create or edit a test.
   then compute PS, WS and the term grade. Filling again updates the same
   columns; columns the teacher typed into by hand are never overwritten.
 
+- **College grading** is the other set of rules a class can follow: Prelim,
+  Midterm and Finals on the 1.00–5.00 scale. A term's score is ⅔ class
+  standing (70% quizzes and activities, 30% assignments) plus ⅓ exam, every
+  quiz counts the same whatever its length, and from Midterm on the grade is
+  ⅓ the previous grade plus ⅔ the term's own score. Tap **Change categories
+  and weights** to match the syllabus: rename, add or remove categories, set
+  their weights, and choose whether a term builds on the one before. The
+  edited rules are saved with the class.
+
+**DepEd or college** is asked once, when a teacher adds their first class, and
+kept per teacher (changeable under Account → *I teach*). It decides how new
+classes are set up and which rules the grading sheet offers; the two are never
+mixed on one screen. A college class is ready to grade the moment it is added.
+
+Grading rules are data, not code: a `GradingScheme` (`lib/grading/`) holds the
+periods, the category tree with its weights, how scores combine, how a term
+carries the previous one, and the scale. DepEd's orders and the college
+preset are both schemes, worked out by the same calculator
+(`computePeriodGrades`), and a test counts under a category id of its class's
+scheme. The E-Class Record fill is offered only for DepEd schemes.
+
 `lib/class_record/` finds the layout by reading the file (the "HIGHEST
 POSSIBLE SCORE" row, the WW/PT/EX headers, and the learner rows), so the
 Grades 2-10 three-term, Strengthened SHS, and DO 8 quarterly templates all

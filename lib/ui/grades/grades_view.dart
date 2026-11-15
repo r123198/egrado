@@ -1,9 +1,9 @@
 import 'package:egrado/data/repositories/class_record_repository.dart';
 import 'package:egrado/data/repositories/class_repository.dart';
 import 'package:egrado/data/repositories/exam_repository.dart';
-import 'package:egrado/grading/grading_policy.dart';
-import 'package:egrado/grading/term_grade.dart';
-import 'package:egrado/grading/transmutation.dart';
+import 'package:egrado/data/repositories/workspace_repository.dart';
+import 'package:egrado/domain/teaching_level.dart';
+import 'package:egrado/grading/grading_scheme.dart';
 import 'package:egrado/ui/core/loading_scaffold.dart';
 import 'package:egrado/ui/core/messages.dart';
 import 'package:egrado/ui/core/navigation.dart';
@@ -15,8 +15,8 @@ import 'package:egrado/ui/widgets/common.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-/// A class's DepEd grades per term, and the way into filling the
-/// teacher's E-Class Record.
+/// A class's grades per grading period under its grading scheme, and
+/// (for DepEd) the way into filling the teacher's E-Class Record.
 class GradesPage extends StatelessWidget {
   const GradesPage(this.classId, {super.key});
 
@@ -30,6 +30,7 @@ class GradesPage extends StatelessWidget {
         classes: context.read<ClassRepository>(),
         exams: context.read<ExamRepository>(),
         records: context.read<ClassRecordRepository>(),
+        workspace: context.read<WorkspaceRepository>(),
       ),
       child: const _GradesView(),
     );
@@ -41,19 +42,25 @@ class _GradesView extends StatelessWidget {
 
   Future<void> _setup(BuildContext context) async {
     final viewModel = context.read<GradesViewModel>();
-    final chosen = await showModalBottomSheet<(GradingPolicy, SubjectGroup?)>(
+    final chosen = await showModalBottomSheet<GradingChoice>(
       context: context,
       isScrollControlled: true,
       builder: (_) => GradingSetupSheet(
+        level: viewModel.level,
         policy: viewModel.policy,
         subject: viewModel.subject,
+        customScheme: viewModel.customScheme,
       ),
     );
     if (chosen == null || !context.mounted) return;
-    final (policy, subject) = chosen;
-    if (!await viewModel.setGrading(policy, subject) && context.mounted) {
-      showMessage(context, Messages.saveFailed);
-    }
+    final saved = await switch (chosen) {
+      DepEdChoice(:final policy, :final subject) => viewModel.setGrading(
+        policy,
+        subject,
+      ),
+      CustomChoice(:final scheme) => viewModel.setCustomScheme(scheme),
+    };
+    if (!saved && context.mounted) showMessage(context, Messages.saveFailed);
   }
 
   @override
@@ -63,8 +70,9 @@ class _GradesView extends StatelessWidget {
     if (viewModel.isLoading) return const LoadingScaffold();
     final schoolClass = viewModel.schoolClass;
     if (schoolClass == null) return const Scaffold();
-    final policy = viewModel.policy;
-    final subject = viewModel.subject;
+    final scheme = viewModel.scheme;
+    final isSetUp = viewModel.hasGradingSetup;
+    final periodLabel = scheme.periodLabel(viewModel.period);
     final text = Theme.of(context).textTheme;
 
     return Scaffold(
@@ -83,16 +91,21 @@ class _GradesView extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        subject?.label ?? 'Choose the subject',
+                        !isSetUp
+                            ? viewModel.level == TeachingLevel.college
+                                  ? 'Choose the grading rules'
+                                  : 'Choose the subject'
+                            : viewModel.customScheme?.label ??
+                                  viewModel.subject?.label ??
+                                  scheme.label,
                         style: text.titleMedium,
                       ),
                       Text(
-                        subject == null
+                        !isSetUp
                             ? 'Needed to know the grade weights'
-                            : 'WW ${subject.weights.writtenWork}% · '
-                                  'PT ${subject.weights.performanceTask}% · '
-                                  'Exam ${subject.weights.exam}%\n'
-                                  '${policy.label}',
+                            : viewModel.customScheme != null
+                            ? scheme.weightSummary
+                            : '${scheme.weightSummary}\n${scheme.label}',
                         style: text.bodyMedium?.copyWith(
                           color: AppColors.inkMuted,
                         ),
@@ -104,14 +117,16 @@ class _GradesView extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: Gap.m),
-          BigActionButton(
-            icon: Icons.table_view_outlined,
-            label: 'Fill my E-Class Record',
-            detail: 'Put every scanned score into your Excel class record',
-            onPressed: () =>
-                openInTab<void>(context, FillRecordPage(viewModel.classId)),
-          ),
+          if (scheme.isDepEd) ...[
+            const SizedBox(height: Gap.m),
+            BigActionButton(
+              icon: Icons.table_view_outlined,
+              label: 'Fill my E-Class Record',
+              detail: 'Put every scanned score into your Excel class record',
+              onPressed: () =>
+                  openInTab<void>(context, FillRecordPage(viewModel.classId)),
+            ),
+          ],
           if (viewModel.untaggedCount > 0) ...[
             const SizedBox(height: Gap.m),
             NoticeBanner(
@@ -130,16 +145,14 @@ class _GradesView extends StatelessWidget {
               text:
                   '${viewModel.outOfRangeCount} '
                   '${viewModel.outOfRangeCount == 1 ? 'test is' : 'tests are'} '
-                  'set to a ${policy.periodName.toLowerCase()} these rules '
-                  "don't have. Edit them and pick a "
-                  '${policy.periodName.toLowerCase()} from 1 to '
-                  '${policy.periodCount}.',
+                  "counted under something these rules don't have. Open "
+                  'each test, tap Edit, and set "Counts toward" again.',
             ),
           ],
-          SectionTitle(policy.periodLabel(viewModel.period)),
+          SectionTitle(periodLabel),
           const _PeriodPicker(),
           const SizedBox(height: Gap.m),
-          if (subject == null)
+          if (!isSetUp)
             const EmptyState(
               icon: Icons.rule,
               title: 'Choose the subject first',
@@ -163,16 +176,27 @@ class _GradesView extends StatelessWidget {
                 background: AppColors.primarySoft,
                 text:
                     'No ${viewModel.missingComponents.map((c) => c.label).join(' or ')} '
-                    'yet in ${policy.periodLabel(viewModel.period)}, so the '
-                    'term grade isn\'t final. Your class record will '
-                    'compute it once those scores are in.',
+                    "yet in $periodLabel, so the grade isn't final."
+                    '${scheme.isDepEd ? ' Your class record will compute '
+                              'it once those scores are in.' : ''}',
+              ),
+              const SizedBox(height: Gap.m),
+            ] else if (viewModel.needsPreviousPeriod) ...[
+              NoticeBanner(
+                icon: Icons.info_outline,
+                color: AppColors.primary,
+                background: AppColors.primarySoft,
+                text:
+                    '$periodLabel builds on '
+                    '${scheme.periodLabel(viewModel.period - 1)}, which '
+                    "isn't complete yet, so there is no grade here.",
               ),
               const SizedBox(height: Gap.m),
             ],
             for (final line in viewModel.lines)
               Padding(
                 padding: const EdgeInsets.only(bottom: Gap.xs),
-                child: _GradeTile(line: line, policy: policy),
+                child: _GradeTile(line: line, scheme: scheme),
               ),
           ],
         ],
@@ -187,7 +211,7 @@ class _PeriodPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<GradesViewModel>();
-    final policy = viewModel.policy;
+    final scheme = viewModel.scheme;
     return SegmentedButton<int>(
       showSelectedIcon: false,
       style: SegmentedButton.styleFrom(
@@ -198,8 +222,8 @@ class _PeriodPicker extends StatelessWidget {
         side: const BorderSide(color: AppColors.primary, width: 2),
       ),
       segments: [
-        for (var p = 1; p <= policy.periodCount; p++)
-          ButtonSegment(value: p, label: Text('${policy.periodName[0]}$p')),
+        for (var p = 1; p <= scheme.periodCount; p++)
+          ButtonSegment(value: p, label: Text(scheme.periodShortLabel(p))),
       ],
       selected: {viewModel.period},
       onSelectionChanged: (s) => viewModel.selectPeriod(s.first),
@@ -208,20 +232,20 @@ class _PeriodPicker extends StatelessWidget {
 }
 
 class _GradeTile extends StatelessWidget {
-  const _GradeTile({required this.line, required this.policy});
+  const _GradeTile({required this.line, required this.scheme});
 
   final GradeLine line;
-  final GradingPolicy policy;
+  final GradingScheme scheme;
 
   @override
   Widget build(BuildContext context) {
     final grade = line.grade;
     final parts = [
-      for (final MapEntry(key: c, value: s) in grade.components.entries)
-        '${c.code} ${s.percentage.toStringAsFixed(0)}%',
+      for (final c in scheme.categories)
+        if (grade.components[c.id] case final score?)
+          '${c.shortLabel} ${score.percentage.toStringAsFixed(0)}%',
     ];
     final value = grade.grade;
-    final passed = value != null && value >= kPassingGrade;
     return SurfaceCard(
       padding: const EdgeInsets.symmetric(horizontal: Gap.s, vertical: Gap.s),
       child: Row(
@@ -256,35 +280,48 @@ class _GradeTile extends StatelessWidget {
             ),
           ),
           if (value != null)
-            Semantics(
-              label: 'Grade $value, ${descriptor(value, policy)}',
-              excludeSemantics: true,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '$value',
-                    style: TextStyle(
-                      fontSize: 30,
-                      fontWeight: FontWeight.w700,
-                      color: passed ? AppColors.ink : AppColors.wrong,
-                    ),
-                  ),
-                  Text(
-                    descriptor(value, policy),
-                    style: const TextStyle(
-                      fontSize: 15,
-                      color: AppColors.inkMuted,
-                    ),
-                  ),
-                ],
-              ),
-            )
+            _GradeFigure(grade: value, scale: scheme.scale)
           else
             const Text(
               '—',
               style: TextStyle(fontSize: 30, color: AppColors.inkMuted),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The grade and its mark, whichever the scale reports first on top:
+/// "88 / Benchmarking" for DepEd, "2.25 / 84" for a college scale.
+class _GradeFigure extends StatelessWidget {
+  const _GradeFigure({required this.grade, required this.scale});
+
+  final int grade;
+  final GradeScale scale;
+
+  @override
+  Widget build(BuildContext context) {
+    final mark = scale.mark(grade);
+    final (big, small) = scale.marksFirst ? (mark, '$grade') : ('$grade', mark);
+    return Semantics(
+      label: 'Grade $big, $small',
+      excludeSemantics: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            big,
+            style: TextStyle(
+              fontSize: 30,
+              fontWeight: FontWeight.w700,
+              color: scale.passes(grade) ? AppColors.ink : AppColors.wrong,
+            ),
+          ),
+          Text(
+            small,
+            style: const TextStyle(fontSize: 15, color: AppColors.inkMuted),
+          ),
         ],
       ),
     );

@@ -1,17 +1,39 @@
 import 'package:egrado/data/auth/auth_repository.dart';
+import 'package:egrado/data/repositories/workspace_repository.dart';
 import 'package:egrado/domain/app_user.dart';
+import 'package:egrado/domain/teaching_level.dart';
 import 'package:egrado/ui/core/view_model.dart';
 
 class AccountViewModel extends ViewModel {
-  AccountViewModel(this._auth, {Future<String> Function()? loadVersion}) {
+  AccountViewModel(
+    this._auth, {
+    WorkspaceRepository? workspace,
+    Future<String> Function()? loadVersion,
+  }) : _workspace = workspace {
     listen(_auth.watchUser(), (user) {
       _user = user;
       notifyListeners();
     });
+    if (workspace != null) {
+      listen(workspace.watchLevel(), (level) {
+        _level = level;
+        notifyListeners();
+      });
+    }
     if (loadVersion != null) _loadVersion(loadVersion);
   }
 
   final AuthRepository _auth;
+  final WorkspaceRepository? _workspace;
+  TeachingLevel? _level;
+
+  /// DepEd or college; null until the teacher has chosen.
+  TeachingLevel? get level => _level;
+
+  /// Sets what new classes are set up for. Classes that already have
+  /// their grading rules keep them.
+  Future<bool> setLevel(TeachingLevel level) =>
+      runCommand(() async => _workspace?.setLevel(level));
 
   AppUser? _user;
   String? _version;

@@ -206,68 +206,67 @@ class _QuestionCountPicker extends StatelessWidget {
   }
 }
 
-/// Which term and which part of the grade (WW, PT, ST1…) the test counts
-/// toward. This is what lets the app fill the E-Class Record by itself.
+/// Which grading period and which category of the class's grading scheme
+/// (WW, PT, ST1… or Quizzes, Exam) the test counts toward. This is what
+/// lets the app work out grades and fill the E-Class Record by itself.
 class _GradeTagPicker extends StatelessWidget {
   const _GradeTagPicker();
+
+  /// Dropdown value for "Not counted"; category ids are never empty.
+  static const _notCountedId = '';
 
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<ExamFormViewModel>();
-    final policy = viewModel.policy;
-    final counted = viewModel.gradeTag != null;
+    final scheme = viewModel.scheme;
+    final counted = viewModel.isCounted;
 
-    Widget chip(String label, bool selected, VoidCallback onTap) => ChoiceChip(
-      label: Text(label),
-      selected: selected,
-      showCheckmark: false,
-      labelStyle: TextStyle(
-        fontSize: 20,
-        fontWeight: FontWeight.w700,
-        color: selected ? Colors.white : AppColors.ink,
-      ),
-      selectedColor: AppColors.primary,
-      backgroundColor: AppColors.surface,
-      side: const BorderSide(color: AppColors.inkMuted, width: 1.5),
-      padding: const EdgeInsets.all(Gap.s),
-      onSelected: (_) => onTap(),
-    );
+    final kindId = viewModel.kind.categoryId ?? _notCountedId;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Wrap(
-          spacing: Gap.s,
-          runSpacing: Gap.s,
-          children: [
+        DropdownButtonFormField<String>(
+          // The choices change with the class's rules: start over then.
+          key: ValueKey('counts-as-${scheme.id}-$kindId'),
+          initialValue: kindId,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Counts as'),
+          items: [
             for (final k in viewModel.kinds)
-              chip(
-                k.label,
-                k.label == viewModel.kind.label,
-                () => viewModel.setKind(k),
+              DropdownMenuItem(
+                value: k.categoryId ?? _notCountedId,
+                child: Text(k.label),
               ),
           ],
+          onChanged: (id) {
+            for (final k in viewModel.kinds) {
+              if ((k.categoryId ?? _notCountedId) == id) viewModel.setKind(k);
+            }
+          },
         ),
         if (counted) ...[
           const SizedBox(height: Gap.m),
-          Wrap(
-            spacing: Gap.s,
-            runSpacing: Gap.s,
-            children: [
-              for (var p = 1; p <= policy.periodCount; p++)
-                chip(
-                  policy.periodLabel(p),
-                  viewModel.period == p,
-                  () => viewModel.setPeriod(p),
-                ),
+          DropdownButtonFormField<int>(
+            key: ValueKey('counts-in-${scheme.id}-${viewModel.period}'),
+            initialValue: viewModel.period,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'In'),
+            items: [
+              for (var p = 1; p <= scheme.periodCount; p++)
+                DropdownMenuItem(value: p, child: Text(scheme.periodLabel(p))),
             ],
+            onChanged: (p) {
+              if (p != null) viewModel.setPeriod(p);
+            },
           ),
         ],
         const SizedBox(height: Gap.s),
         Text(
           counted
               ? 'Scores go to ${viewModel.kind.label} in '
-                    '${policy.periodLabel(viewModel.period)} of your class record.'
+                    '${scheme.periodLabel(viewModel.period)}'
+                    '${scheme.isDepEd ? ' of your class record' : ''}.'
               : "Practice only: scores won't go into grades.",
           style: Theme.of(context).textTheme.bodyMedium
               ?.copyWith(color: AppColors.inkMuted),

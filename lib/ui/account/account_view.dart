@@ -1,3 +1,5 @@
+import 'package:egrado/data/repositories/workspace_repository.dart';
+import 'package:egrado/ui/widgets/teaching_level_dialog.dart';
 import 'package:egrado/data/auth/auth_repository.dart';
 import 'package:egrado/ui/account/account_view_model.dart';
 import 'package:egrado/ui/core/messages.dart';
@@ -18,6 +20,7 @@ class AccountPage extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (context) => AccountViewModel(
         context.read<AuthRepository>(),
+        workspace: context.read<WorkspaceRepository>(),
         loadVersion: () async {
           final info = await PackageInfo.fromPlatform();
           return '${info.version} (${info.buildNumber})';
@@ -44,6 +47,15 @@ class _AccountView extends StatelessWidget {
     if (!ok || !context.mounted) return;
     if (!await viewModel.signOut() && context.mounted) {
       showMessage(context, Messages.signOutFailed);
+    }
+  }
+
+  Future<void> _chooseLevel(BuildContext context) async {
+    final viewModel = context.read<AccountViewModel>();
+    final level = await askTeachingLevel(context, current: viewModel.level);
+    if (level == null || !context.mounted) return;
+    if (!await viewModel.setLevel(level) && context.mounted) {
+      showMessage(context, Messages.saveFailed);
     }
   }
 
@@ -107,6 +119,14 @@ class _AccountView extends StatelessWidget {
             ),
           ),
           const SizedBox(height: Gap.l),
+          BigActionButton(
+            icon: Icons.school_outlined,
+            label: 'I teach: ${viewModel.level?.label ?? 'not set yet'}',
+            detail: 'Sets up new classes for DepEd or college grading',
+            primary: false,
+            onPressed: () => _chooseLevel(context),
+          ),
+          const SizedBox(height: Gap.s),
           BigActionButton(
             icon: Icons.help_outline,
             label: 'How eGrado works',

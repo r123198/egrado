@@ -26,6 +26,10 @@ class SchoolClasses extends Table {
   /// Subject group id inside the policy; null = not chosen yet.
   TextColumn get subjectGroup => text().nullable()();
 
+  /// The teacher's own grading scheme as JSON (`GradingScheme.toJson`);
+  /// null = the DepEd policy and subject above.
+  TextColumn get customScheme => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -54,14 +58,12 @@ class Exams extends Table {
   TextColumn get answerKey => text().map(const ChoiceListConverter())();
   DateTimeColumn get createdAt => dateTime()();
 
-  /// Term or quarter this test counts toward; null = not counted.
+  /// Grading period this test counts toward; null = not counted.
   IntColumn get gradingPeriod => integer().nullable()();
 
-  /// `GradeComponent.name`; null = not counted.
-  TextColumn get gradeComponent => text().nullable()();
-
-  /// `ExamPart.name` for exams (ST1, ST2, TE, QA).
-  TextColumn get examPart => text().nullable()();
+  /// Id of the grading-scheme category this test counts under (Written
+  /// Work, Term Exam, Quizzes…); null = not counted.
+  TextColumn get gradeCategory => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -113,4 +115,15 @@ class RecordPlacements extends Table {
 
   @override
   Set<Column> get primaryKey => {examId};
+}
+
+/// Small per-teacher choices (which kind of school they teach in), one
+/// row per setting.
+@DataClassName('SettingRow')
+class Settings extends Table {
+  TextColumn get key => text()();
+  TextColumn get value => text()();
+
+  @override
+  Set<Column> get primaryKey => {key};
 }

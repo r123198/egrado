@@ -1,31 +1,34 @@
-import 'package:egrado/grading/grading_policy.dart';
 import 'package:meta/meta.dart';
 
-/// What a test counts toward in the grade: which term/quarter, and
-/// whether it is Written Work, a Performance Task or an exam.
+/// What a test counts toward in the grade: which grading period, and
+/// which category of the class's grading scheme (Written Work, Term Exam,
+/// Quizzes…).
 @immutable
 class GradeTag {
-  const GradeTag({required this.period, required this.component, this.examPart})
+  const GradeTag({required this.period, required this.categoryId})
     : assert(period >= 1);
 
   final int period;
-  final GradeComponent component;
 
-  /// ST1, ST2, TE or QA when [component] is [GradeComponent.exam].
-  final ExamPart? examPart;
+  /// The id of a leaf category in the class's grading scheme.
+  final String categoryId;
 
-  /// "Written Work", "Summative Test 1", …
-  String get label => examPart?.label ?? component.label;
+  GradeTag copyWith({int? period, String? categoryId}) => GradeTag(
+    period: period ?? this.period,
+    categoryId: categoryId ?? this.categoryId,
+  );
 
   @override
   bool operator ==(Object other) =>
       other is GradeTag &&
       other.period == period &&
-      other.component == component &&
-      other.examPart == examPart;
+      other.categoryId == categoryId;
 
   @override
-  int get hashCode => Object.hash(period, component, examPart);
+  int get hashCode => Object.hash(period, categoryId);
+
+  @override
+  String toString() => 'GradeTag($period, $categoryId)';
 }
 
 @immutable

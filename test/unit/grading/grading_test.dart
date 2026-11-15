@@ -3,6 +3,19 @@ import 'package:egrado/grading/term_grade.dart';
 import 'package:egrado/grading/transmutation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// One DepEd period on its own: [policy] with a subject's [weights].
+List<TermGrade> computeTermGrades({
+  required GradingPolicy policy,
+  required ComponentWeights weights,
+  required Iterable<int> studentNumbers,
+  required List<GradedActivity> activities,
+}) => computePeriodGrades(
+  scheme: depEdScheme(policy, weights),
+  period: 1,
+  studentNumbers: studentNumbers,
+  activitiesByPeriod: {1: activities},
+);
+
 void main() {
   group('adjusted 2026 transmutation (DO 015 Annex D Table 4)', () {
     // Both edges of a sample of rows, straight from the printed table.
@@ -76,40 +89,34 @@ void main() {
         studentNumbers: [1],
         activities: [
           GradedActivity(
-            component: GradeComponent.writtenWork,
+            categoryId: DepEdCategory.writtenWork,
             highestScore: 85,
             scores: {1: 74},
           ),
           GradedActivity(
-            component: GradeComponent.performanceTask,
+            categoryId: DepEdCategory.performanceTask,
             highestScore: 50,
             scores: {1: 43},
           ),
           GradedActivity(
-            component: GradeComponent.exam,
-            examPart: ExamPart.summativeTest1,
+            categoryId: DepEdCategory.summativeTest1,
             highestScore: 20,
             scores: {1: 15},
           ),
           GradedActivity(
-            component: GradeComponent.exam,
-            examPart: ExamPart.summativeTest2,
+            categoryId: DepEdCategory.summativeTest2,
             highestScore: 20,
             scores: {1: 18},
           ),
           GradedActivity(
-            component: GradeComponent.exam,
-            examPart: ExamPart.termExam,
+            categoryId: DepEdCategory.termExam,
             highestScore: 40,
             scores: {1: 35},
           ),
         ],
       );
       final g = grades.single;
-      expect(
-        g.components[GradeComponent.exam]!.percentage,
-        closeTo(84.5, 1e-9),
-      );
+      expect(g.components[DepEdCategory.exam]!.percentage, closeTo(84.5, 1e-9));
       expect(g.initialGrade, closeTo(85.76, 0.01));
       expect(g.grade, 88);
       expect(g.isComplete, isTrue);
@@ -122,18 +129,18 @@ void main() {
         studentNumbers: [1],
         activities: [
           GradedActivity(
-            component: GradeComponent.writtenWork,
+            categoryId: DepEdCategory.writtenWork,
             highestScore: 10,
             scores: {1: 10},
           ),
           GradedActivity(
-            component: GradeComponent.writtenWork,
+            categoryId: DepEdCategory.writtenWork,
             highestScore: 30,
             scores: {1: 10},
           ),
         ],
       ).single;
-      expect(g.components[GradeComponent.writtenWork]!.percentage, 50);
+      expect(g.components[DepEdCategory.writtenWork]!.percentage, 50);
     });
 
     test('no grade while a weighted component has nothing yet', () {
@@ -143,16 +150,16 @@ void main() {
         studentNumbers: [1],
         activities: [
           GradedActivity(
-            component: GradeComponent.writtenWork,
+            categoryId: DepEdCategory.writtenWork,
             highestScore: 10,
             scores: {1: 8},
           ),
         ],
       ).single;
       expect(g.grade, isNull);
-      expect(g.missingComponents, [
-        GradeComponent.performanceTask,
-        GradeComponent.exam,
+      expect(g.missingComponents.map((c) => c.id), [
+        DepEdCategory.performanceTask,
+        DepEdCategory.exam,
       ]);
     });
 
@@ -163,12 +170,12 @@ void main() {
         studentNumbers: [1],
         activities: [
           GradedActivity(
-            component: GradeComponent.writtenWork,
+            categoryId: DepEdCategory.writtenWork,
             highestScore: 10,
             scores: {1: 10},
           ),
           GradedActivity(
-            component: GradeComponent.performanceTask,
+            categoryId: DepEdCategory.performanceTask,
             highestScore: 10,
             scores: {1: 10},
           ),
@@ -184,7 +191,7 @@ void main() {
         studentNumbers: [1, 2],
         activities: [
           GradedActivity(
-            component: GradeComponent.writtenWork,
+            categoryId: DepEdCategory.writtenWork,
             highestScore: 10,
             scores: {1: 10},
           ),
@@ -203,14 +210,12 @@ void main() {
         studentNumbers: [1],
         activities: [
           GradedActivity(
-            component: GradeComponent.exam,
-            examPart: ExamPart.summativeTest1,
+            categoryId: DepEdCategory.summativeTest1,
             highestScore: 10,
             scores: {1: 5},
           ),
           GradedActivity(
-            component: GradeComponent.exam,
-            examPart: ExamPart.termExam,
+            categoryId: DepEdCategory.termExam,
             highestScore: 10,
             scores: {1: 10},
           ),
@@ -227,8 +232,7 @@ void main() {
         studentNumbers: [1],
         activities: [
           GradedActivity(
-            component: GradeComponent.exam,
-            examPart: ExamPart.quarterlyAssessment,
+            categoryId: DepEdCategory.quarterlyAssessment,
             highestScore: 40,
             scores: {1: 30},
           ),
@@ -247,18 +251,17 @@ void main() {
         studentNumbers: [1],
         activities: [
           GradedActivity(
-            component: GradeComponent.writtenWork,
+            categoryId: DepEdCategory.writtenWork,
             highestScore: 60,
             scores: {1: 43},
           ),
           GradedActivity(
-            component: GradeComponent.performanceTask,
+            categoryId: DepEdCategory.performanceTask,
             highestScore: 100,
             scores: {1: 42},
           ),
           GradedActivity(
-            component: GradeComponent.exam,
-            examPart: ExamPart.termExam,
+            categoryId: DepEdCategory.termExam,
             highestScore: 45,
             scores: {1: 17},
           ),
@@ -275,7 +278,7 @@ void main() {
         studentNumbers: [1],
         activities: [
           GradedActivity(
-            component: GradeComponent.writtenWork,
+            categoryId: DepEdCategory.writtenWork,
             highestScore: 10,
             scores: {1: 12},
           ),
@@ -293,9 +296,9 @@ void main() {
     });
 
     test('uses the right descriptor set per policy', () {
-      expect(descriptor(88, do015Sy2026), 'Benchmarking');
-      expect(descriptor(74, do015Sy2026), 'Developing');
-      expect(descriptor(88, do8s2015), 'Very Satisfactory');
+      expect(depEdScale(do015Sy2026).mark(88), 'Benchmarking');
+      expect(depEdScale(do015Sy2026).mark(74), 'Developing');
+      expect(depEdScale(do8s2015).mark(88), 'Very Satisfactory');
     });
   });
 
